@@ -1,1 +1,5 @@
 /target
+# envlock managed
+.env
+.envlock/identity.txt
+.env.edit.tmp
