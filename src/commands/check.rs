@@ -19,7 +19,7 @@ pub fn execute() -> Result<()> {
     }
 
     // 2. Check if the sensitive files would be tracked by git
-    let sensitive_files = [".env", ".envlock/identity.txt"];
+    let sensitive_files = [".env", ".envlock/identity.txt", ".env.edit.tmp"];
     for file in &sensitive_files {
         if gitignore::is_git_tracked(&project_root, file) {
             problems.push(format!(
@@ -45,6 +45,13 @@ pub fn execute() -> Result<()> {
         let present = gitignore::missing_entries(&project_root)?;
         if present.is_empty() {
             println!("  ✓ .gitignore is up to date");
+        }
+        let hook_path = project_root.join(".git").join("hooks").join("pre-commit");
+        if hook_path.exists() {
+            let content = std::fs::read_to_string(&hook_path).unwrap_or_default();
+            if content.contains("envlock check") {
+                println!("  ✓ pre-commit hook is installed");
+            }
         }
     } else {
         println!("⚠ Security issues found:");

@@ -1,12 +1,12 @@
 [package]
 name = "envlock"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Encrypt, decrypt, and inject .env files with age encryption"
 license = "MIT OR Apache-2.0"
 keywords = ["env", "encryption", "age", "secrets", "dotenv"]
 categories = ["command-line-utilities", "cryptography"]
-repository = "https://github.com/nicholasgasior/envlock"
+repository = "https://github.com/FxckingAngel/envlock"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

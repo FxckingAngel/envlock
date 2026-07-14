@@ -6,3 +6,5 @@ pub mod diff;
 pub mod rotate;
 pub mod recipients;
 pub mod check;
+pub mod edit;
+pub mod hook;

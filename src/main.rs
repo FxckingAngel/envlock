@@ -40,6 +40,17 @@ enum Commands {
         command: Vec<String>,
     },
 
+    /// Open the vault in $EDITOR, re-encrypt on save.
+    ///
+    /// The plaintext is written to a temp file (.env.edit.tmp) that is
+    /// scrubbed (zeroed + deleted) on exit, even on panic. The .env file
+    /// is never written to disk.
+    Edit {
+        /// Path to the vault file. Defaults to .env.vault.
+        #[arg(long)]
+        vault: Option<std::path::PathBuf>,
+    },
+
     /// Compare keys between two vault files (values redacted).
     Diff {
         /// First vault file.
@@ -76,6 +87,12 @@ enum Commands {
     /// Check that secrets won't be accidentally committed to git.
     Check,
 
+    /// Install or uninstall the envlock pre-commit hook.
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
+
     /// Generate shell completions to stdout.
     Completions {
         /// Shell to generate completions for.
@@ -111,6 +128,15 @@ enum RecipientAction {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum HookAction {
+    /// Install the pre-commit hook that runs envlock check.
+    Install,
+
+    /// Uninstall the envlock pre-commit hook.
+    Uninstall,
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -119,6 +145,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Encrypt { path } => envlock::commands::encrypt::execute(path),
         Commands::Decrypt { path } => envlock::commands::decrypt::execute(path),
         Commands::Run { vault, command } => envlock::commands::run::execute(command, vault),
+        Commands::Edit { vault } => envlock::commands::edit::execute(vault),
         Commands::Diff { vault_a, vault_b } => envlock::commands::diff::execute(vault_a, vault_b),
         Commands::Rotate {
             key_name,
@@ -134,6 +161,10 @@ fn main() -> anyhow::Result<()> {
             }
         },
         Commands::Check => envlock::commands::check::execute(),
+        Commands::Hook { action } => match action {
+            HookAction::Install => envlock::commands::hook::install(),
+            HookAction::Uninstall => envlock::commands::hook::uninstall(),
+        },
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
             let name = "envlock".to_string();

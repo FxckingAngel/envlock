@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 /// Entries that envlock manages in .gitignore.
-const ENTRIES: &[&str] = &[".env", ".envlock/identity.txt"];
+const ENTRIES: &[&str] = &[".env", ".envlock/identity.txt", ".env.edit.tmp"];
 
 /// Ensure the given entries are present in `.gitignore`, appending only
 /// what's missing. Creates the file if it doesn't exist.
@@ -133,7 +133,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let missing = missing_entries(&dir).unwrap();
-        assert_eq!(missing, vec![".env", ".envlock/identity.txt"]);
+        assert_eq!(missing, vec![".env", ".envlock/identity.txt", ".env.edit.tmp"]);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -144,7 +144,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(".gitignore"), ".env\n").unwrap();
         let missing = missing_entries(&dir).unwrap();
-        assert_eq!(missing, vec![".envlock/identity.txt"]);
+        assert_eq!(missing, vec![".envlock/identity.txt", ".env.edit.tmp"]);
         let _ = fs::remove_dir_all(&dir);
     }
 
