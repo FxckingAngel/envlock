@@ -12,7 +12,12 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Generate an age keypair for this project.
-    Init,
+    /// Installs the pre-commit hook by default.
+    Init {
+        /// Skip installing the pre-commit hook.
+        #[arg(long)]
+        no_hook: bool,
+    },
 
     /// Encrypt a .env file to .env.vault.
     Encrypt {
@@ -85,13 +90,20 @@ enum Commands {
     },
 
     /// Check that secrets won't be accidentally committed to git.
-    Check,
+    Check {
+        /// Strict mode: also flag secret-shaped files like .env.local, .env.production.
+        #[arg(long)]
+        strict: bool,
+    },
 
     /// Install or uninstall the envlock pre-commit hook.
     Hook {
         #[command(subcommand)]
         action: HookAction,
     },
+
+    /// Diagnose your envlock setup — run after git clone.
+    Doctor,
 
     /// Generate shell completions to stdout.
     Completions {
@@ -141,7 +153,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init => envlock::commands::init::execute(),
+        Commands::Init { no_hook } => envlock::commands::init::execute(no_hook),
         Commands::Encrypt { path } => envlock::commands::encrypt::execute(path),
         Commands::Decrypt { path } => envlock::commands::decrypt::execute(path),
         Commands::Run { vault, command } => envlock::commands::run::execute(command, vault),
@@ -160,11 +172,12 @@ fn main() -> anyhow::Result<()> {
                 envlock::commands::recipients::remove(&public_key)
             }
         },
-        Commands::Check => envlock::commands::check::execute(),
+        Commands::Check { strict } => envlock::commands::check::execute(strict),
         Commands::Hook { action } => match action {
             HookAction::Install => envlock::commands::hook::install(),
             HookAction::Uninstall => envlock::commands::hook::uninstall(),
         },
+        Commands::Doctor => envlock::commands::doctor::execute(),
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
             let name = "envlock".to_string();

@@ -1,3 +1,4 @@
+use crate::commands::check;
 use crate::config;
 use crate::crypto;
 use crate::gitignore;
@@ -43,6 +44,17 @@ impl Drop for TempGuard {
 pub fn execute(vault_path: Option<PathBuf>) -> Result<()> {
     let project_root = std::env::current_dir()?;
     let vault = vault_path.unwrap_or_else(|| PathBuf::from(".env.vault"));
+
+    // Pre-flight: warn if gitignore isn't covering secrets in this checkout
+    let check_result = check::run_check(&project_root, false)?;
+    if !check_result.problems.is_empty() {
+        eprintln!("⚠ WARNING: .gitignore may not be protecting secrets in this checkout:");
+        for problem in &check_result.problems {
+            eprintln!("  {}", problem);
+        }
+        eprintln!("  Run `envlock init` or `envlock doctor` to fix this.");
+        eprintln!();
+    }
 
     // Read identity
     let identity_str = config::read_identity(&project_root)?;

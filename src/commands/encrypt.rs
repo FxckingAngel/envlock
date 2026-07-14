@@ -1,3 +1,4 @@
+use crate::commands::check;
 use crate::config;
 use crate::crypto;
 use anyhow::{Context, Result};
@@ -9,6 +10,9 @@ use std::path::PathBuf;
 pub fn execute(path: Option<PathBuf>) -> Result<()> {
     let project_root = std::env::current_dir()?;
     let plaintext_path = path.unwrap_or_else(|| PathBuf::from(".env"));
+
+    // Pre-flight: warn if gitignore isn't covering secrets in this checkout
+    preflight_gitignore_check(&project_root)?;
 
     // Read plaintext
     let plaintext = fs::read(&plaintext_path).with_context(|| {
@@ -46,6 +50,23 @@ pub fn execute(path: Option<PathBuf>) -> Result<()> {
         vault_path.display(),
         ciphertext.len()
     );
+
+    Ok(())
+}
+
+/// Pre-flight check: warn (not block) if .gitignore isn't covering secret files.
+/// This catches the "fresh checkout, gitignore not staged yet" case.
+fn preflight_gitignore_check(project_root: &std::path::Path) -> Result<()> {
+    let check_result = check::run_check(project_root, false)?;
+
+    if !check_result.problems.is_empty() {
+        eprintln!("⚠ WARNING: .gitignore may not be protecting secrets in this checkout:");
+        for problem in &check_result.problems {
+            eprintln!("  {}", problem);
+        }
+        eprintln!("  Run `envlock init` or `envlock doctor` to fix this.");
+        eprintln!();
+    }
 
     Ok(())
 }

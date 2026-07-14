@@ -8,3 +8,4 @@ pub mod recipients;
 pub mod check;
 pub mod edit;
 pub mod hook;
+pub mod doctor;
