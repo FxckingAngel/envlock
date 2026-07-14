@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 keywords = ["env", "encryption", "age", "secrets", "dotenv"]
 categories = ["command-line-utilities", "cryptography"]
 repository = "https://github.com/FxckingAngel/envlock"
+exclude = [".env", ".envlock/", ".env.vault", "*.env.edit.tmp"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
