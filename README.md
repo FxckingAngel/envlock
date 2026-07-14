@@ -15,7 +15,8 @@ Or download a prebuilt binary from [GitHub Releases](https://github.com/FxckingA
 ## Quick start
 
 ```bash
-envlock init          # generate keypair, update .gitignore
+envlock doctor       # first: verify your setup is safe (run this after git clone)
+envlock init          # generate keypair, update .gitignore, install pre-commit hook
 envlock encrypt       # .env → .env.vault
 git add .env.vault    # safe to commit
 git commit -m "add encrypted env"
@@ -34,16 +35,31 @@ If you need structured file encryption or integration with cloud KMS, use SOPS. 
 
 ## Commands
 
+### `envlock doctor`
+
+Diagnose your envlock setup — run this after `git clone` or any time you're unsure. Checks:
+
+- Git repository present
+- `.envlock/` directory and identity file exist with correct permissions
+- Recipients file present
+- `.gitignore` covers all sensitive files
+- `.env.vault` exists
+- Pre-commit hook is installed
+- No secret files are currently tracked by git
+
+Exits non-zero if issues are found. This is the first command you should run in any checkout.
+
 ### `envlock init`
 
 - Generates an age x25519 keypair
 - Writes private key to `.envlock/identity.txt` (mode 0600 on Unix)
 - Writes public key (recipient) to `.envlock/recipients.txt`
 - Auto-appends `.env`, `.envlock/identity.txt`, and `.env.edit.tmp` to `.gitignore`
+- **Installs the pre-commit hook by default** (use `--no-hook` to skip)
 
 ### `envlock encrypt [path]`
 
-Encrypts a plaintext file (default `.env`) to `<path>.vault` using the recipients in `.envlock/recipients.txt`.
+Encrypts a plaintext file (default `.env`) to `<path>.vault` using the recipients in `.envlock/recipients.txt`. Warns if `.gitignore` isn't covering secrets in this checkout.
 
 ### `envlock decrypt [path]`
 
@@ -63,6 +79,7 @@ Opens the vault in your `$EDITOR` (or `$VISUAL`, falling back to `vi`). When you
 - When the editor closes, the temp file is scrubbed (overwritten with zeros then deleted) — even on panic
 - The vault is only updated if the edited content parses as valid `KEY=VALUE` pairs
 - If the editor exits non-zero, the vault is left unchanged
+- Warns if `.gitignore` isn't covering secrets in this checkout
 
 ### `envlock diff <vault-a> <vault-b>`
 
@@ -92,9 +109,11 @@ Prints all recipients from `.envlock/recipients.txt`.
 
 Removes a recipient. Refuses to remove the last one — at least one is required so vaults remain decryptable.
 
-### `envlock check`
+### `envlock check [--strict]`
 
 Scans `.gitignore` and `git status` to verify that secrets won't be accidentally committed. Warns if `.env`, `.envlock/identity.txt`, or `.env.edit.tmp` would be trackable. Also checks whether the pre-commit hook is installed. Exits non-zero if problems are found.
+
+With `--strict`, also flags secret-shaped files like `.env.local`, `.env.production`, `.env.staging` that are tracked by git. Use this in CI or manual audits.
 
 ### `envlock hook install`
 
@@ -132,15 +151,17 @@ envlock completions powershell > _envlock.ps1
 .env                 # decrypted plaintext, gitignored
 .env.edit.tmp        # edit temp file, gitignored & scrubbed on exit
 .gitignore           # auto-managed by envlock
-.git/hooks/pre-commit  # optional: auto-installed by envlock hook install
+.git/hooks/pre-commit  # auto-installed by envlock init
 ```
 
 ## Recommended workflow
 
 ```bash
+# After git clone (or any time you're unsure)
+envlock doctor          # verify setup is safe
+
 # First time setup
-envlock init
-envlock hook install    # blocks insecure commits automatically
+envlock init            # generates keys + installs pre-commit hook
 
 # Daily workflow
 envlock edit            # decrypt → $EDITOR → re-encrypt (no .env on disk)
@@ -152,6 +173,9 @@ envlock recipients add age1teammate...
 envlock encrypt         # re-encrypt to include new recipient
 git add .env.vault .envlock/recipients.txt
 git commit -m "add teammate"
+
+# CI / manual audit
+envlock check --strict  # catches .env.local, .env.production, etc.
 ```
 
 ## Team sharing workflow
@@ -161,8 +185,11 @@ git commit -m "add teammate"
 envlock init
 envlock encrypt
 
-# Bob generates his own keypair in the same repo
-envlock init  # creates his own .envlock/identity.txt (gitignored)
+# Bob clones the repo and runs doctor first
+envlock doctor          # catches any setup issues
+
+# Bob generates his own keypair
+envlock init            # creates his own .envlock/identity.txt (gitignored)
 
 # Bob shares his public key with Alice
 cat .envlock/recipients.txt
@@ -181,8 +208,9 @@ envlock run -- python app.py
 
 ### What envlock protects against
 
-- **Accidental commits** of `.env` files containing secrets — `.gitignore` is auto-managed, `envlock check` verifies it, and the pre-commit hook enforces it automatically
+- **Accidental commits** of `.env` files containing secrets — `.gitignore` is auto-managed, `envlock check` verifies it, and the pre-commit hook is installed by default on `init`
 - **Plaintext-at-rest** on disk — `envlock run` and `envlock edit` decrypt in memory only; `.env` is gitignored and 0600-permissioned; edit temp files are zeroed before deletion
+- **Fresh checkout exposure** — `envlock encrypt` and `envlock edit` warn if `.gitignore` isn't covering secrets; `envlock doctor` catches the full picture after `git clone`
 - **Insider access creep** — `envlock recipients remove` + re-encrypt revokes future access
 - **Shell history leaks** — `envlock rotate --prompt` reads secrets without echoing
 
@@ -199,13 +227,16 @@ envlock is a **local secret hygiene tool**, not a secrets manager. For productio
 ## Security notes
 
 - Private keys live in `.envlock/identity.txt` with 0600 permissions and are automatically added to `.gitignore`.
+- `envlock init` installs the pre-commit hook by default — the safety net is on from the start. Use `--no-hook` only if you have an alternative.
 - `envlock decrypt` writes `.env` with 0600 permissions.
 - `envlock run` never writes decrypted content to disk — secrets exist only in the subprocess's memory.
 - `envlock edit` writes to a temp file that is scrubbed (zeroed + deleted) on exit, even on panic. `.env` is never created.
+- `envlock encrypt` and `envlock edit` warn if `.gitignore` isn't protecting secrets in the current checkout.
 - `envlock diff` redacts values — only key names and change types are shown.
 - Decryption failures produce a generic "Decryption failed" message to avoid oracle-style information leaks.
 - `envlock rotate --prompt` reads secrets from stdin without echoing, keeping them out of shell history.
-- `envlock check` + pre-commit hook provide a safety net that's on by default after `envlock hook install`.
+- `envlock check` + pre-commit hook provide a safety net that's on by default after `envlock init`.
+- `envlock doctor` gives a full diagnostic — run it after `git clone` or any time something feels off.
 
 ## Dependencies
 

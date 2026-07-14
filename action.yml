@@ -1,0 +1,35 @@
+name: 'envlock CI'
+description: 'Inject secrets from GitHub Actions into a subprocess using envlock'
+branding:
+  icon: 'lock'
+  color: 'blue'
+
+inputs:
+  prefix:
+    description: 'Environment variable prefix for secrets (e.g. ENVLOCK_)'
+    required: true
+    default: 'ENVLOCK_'
+  command:
+    description: 'Command to run with secrets injected'
+    required: true
+  vault:
+    description: 'Optional path to .env.vault for merging vault secrets with CI secrets'
+    required: false
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install envlock
+      shell: bash
+      run: |
+        if ! command -v envlock &> /dev/null; then
+          cargo install envlock --quiet 2>/dev/null || {
+            echo "::error::envlock is not installed and cargo install failed"
+            exit 1
+          }
+        fi
+
+    - name: Run with secrets
+      shell: bash
+      run: |
+        envlock ci run --prefix "${{ inputs.prefix }}" ${{ inputs.vault && format('--vault {0}', inputs.vault) || '' }} -- ${{ inputs.command }}

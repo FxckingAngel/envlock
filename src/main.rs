@@ -1,7 +1,7 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, shells::Bash, shells::Zsh, shells::Fish, shells::PowerShell};
 
-/// envlock — encrypt, decrypt, and inject .env files with age encryption.
+/// envlock — encrypt, decrypt, and inject `.env` files with age encryption.
 #[derive(Parser, Debug)]
 #[command(name = "envlock", version, about)]
 pub struct Cli {
@@ -105,11 +105,34 @@ enum Commands {
     /// Diagnose your envlock setup — run after git clone.
     Doctor,
 
+    /// CI/CD integration — bridge between envlock and CI secret managers.
+    Ci {
+        #[command(subcommand)]
+        action: CiAction,
+    },
+
     /// Generate shell completions to stdout.
     Completions {
         /// Shell to generate completions for.
         shell: Shell,
     },
+}
+
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum ExportFormat {
+    Dotenv,
+    Json,
+    Github,
+}
+
+impl ExportFormat {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ExportFormat::Dotenv => "dotenv",
+            ExportFormat::Json => "json",
+            ExportFormat::Github => "github",
+        }
+    }
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -149,6 +172,61 @@ enum HookAction {
     Uninstall,
 }
 
+#[derive(Subcommand, Debug)]
+enum CiAction {
+    /// Decrypt vault and output secrets for CI secret managers.
+    ///
+    /// Pipe to `gh secret set`, AWS CLI, or write to $GITHUB_ENV.
+    Export {
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = ExportFormat::Dotenv)]
+        format: ExportFormat,
+
+        /// Path to the vault file. Defaults to .env.vault.
+        #[arg(long)]
+        vault: Option<std::path::PathBuf>,
+    },
+
+    /// Read secrets from CI env vars and inject into a subprocess.
+    ///
+    /// Reads all env vars with the given prefix, strips the prefix,
+    /// and injects them — same interface as `envlock run` but sourced
+    /// from the CI provider's environment instead of a vault.
+    Run {
+        /// Environment variable prefix (e.g. ENVLOCK_).
+        #[arg(long)]
+        prefix: String,
+
+        /// Optionally also load secrets from a vault file (vault vars are
+        /// overridden by CI env vars with the same key).
+        #[arg(long)]
+        vault: Option<std::path::PathBuf>,
+
+        /// The command to run (after --).
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+
+    /// Read secrets from CI env vars and encrypt to a vault file.
+    ///
+    /// Creates an ephemeral .env.vault using only the project's public
+    /// recipients — no private key needed in CI. Any team member can
+    /// decrypt the resulting vault locally.
+    Seal {
+        /// Environment variable prefix (e.g. ENVLOCK_).
+        #[arg(long)]
+        prefix: String,
+
+        /// Output vault file path. Defaults to .env.vault.
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+
+        /// Overwrite existing vault file.
+        #[arg(long)]
+        overwrite: bool,
+    },
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -178,6 +256,19 @@ fn main() -> anyhow::Result<()> {
             HookAction::Uninstall => envlock::commands::hook::uninstall(),
         },
         Commands::Doctor => envlock::commands::doctor::execute(),
+        Commands::Ci { action } => match action {
+            CiAction::Export { format, vault } => envlock::commands::ci_export::execute(format.as_str(), vault),
+            CiAction::Run {
+                prefix,
+                vault,
+                command,
+            } => envlock::commands::ci_run::execute(prefix, command, vault),
+            CiAction::Seal {
+                prefix,
+                output,
+                overwrite,
+            } => envlock::commands::ci_seal::execute(prefix, output, overwrite),
+        },
         Commands::Completions { shell } => {
             let mut cmd = Cli::command();
             let name = "envlock".to_string();
