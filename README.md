@@ -23,15 +23,19 @@ git commit -m "add encrypted env"
 envlock run -- python app.py   # inject secrets, no .env on disk
 ```
 
+## Scope — what this actually is
+
+envlock is a small, single-purpose tool for one problem: keeping `.env` files out of plaintext and out of git history for solo developers and small teams who don't have (or don't want) cloud infrastructure for secrets. It is **not** a replacement for a cloud KMS, a password manager, or your CI/CD provider's built-in secrets manager — if you have access to AWS Secrets Manager, GitHub Actions Secrets, or Bitwarden, those are more capable and better suited for anything beyond local `.env` hygiene. envlock's honest niche is: free, no account, no cloud dependency, works fully offline.
+
 ## Why not SOPS / git-crypt / dotenv-vault?
 
 | Tool | Difference |
 |---|---|
-| **SOPS** | General-purpose structured encryption (YAML, JSON, etc.). Heavier dependency, more complexity. envlock is single-purpose: `.env` files only, zero config. |
+| **SOPS** | General-purpose structured encryption (YAML, JSON, Vault/KMS backends, key groups). envlock has a narrower scope — `.env` files only, no cloud KMS integration — which keeps it simpler to reason about, but it is **not** "zero config": you still manage `.envlock/identity.txt` and `.envlock/recipients.txt`, the same category of setup SOPS requires for its own key config. If you need structured file support or KMS integration, SOPS is the stronger tool. |
 | **git-crypt** | Transparent encryption at the git level. Requires GPG, harder to rotate access per-person. envlock uses age keys and supports multi-recipient out of the box. |
 | **dotenv-vault** | Node.js ecosystem, requires an account on their service. envlock is a standalone Rust binary — no server, no account, no telemetry. |
 
-If you need structured file encryption or integration with cloud KMS, use SOPS. If you want the simplest possible `.env` encryption with no infrastructure, use envlock.
+None of this makes envlock "better" than these tools in general — it's narrower, not superior. Pick SOPS or a cloud KMS if you have access to one and need more than `.env` files. Pick envlock if you want the smallest possible offline tool for exactly this one job.
 
 ## Commands
 
@@ -141,6 +145,38 @@ envlock completions fish > ~/.config/fish/completions/envlock.fish
 envlock completions powershell > _envlock.ps1
 ```
 
+## CI/CD bridge
+
+The most common critique of git-native secret tools is fair: your SCM/CI provider already has a secrets manager, and it's usually better. envlock doesn't try to replace that — instead, these commands bridge your local encrypted vault to whatever secrets store your CI already uses, so you're not manually copy-pasting values between the two.
+
+### `envlock ci export [--format dotenv|json|github]`
+
+Decrypts the vault and prints the contents to **stdout** in the requested format, for piping into your CI provider's secret-import tooling (e.g. `gh secret set --env-file -`).
+
+> **Warning:** this prints decrypted secrets to stdout. If a CI step echoes or logs its own stdout, piping `ci export` through it will leak the values into build logs. Only use this to pipe directly into a secret-setting command, never into a step that prints its input.
+
+### `envlock ci run --prefix <PREFIX> -- <command...>`
+
+Reads environment variables matching `<PREFIX>` (as set by your CI provider from its own secrets store), strips the prefix, and injects them into the subprocess — mirroring the local `envlock run` interface so the same command works in both places.
+
+### `envlock ci seal --prefix <PREFIX> [--overwrite]`
+
+Reads environment variables matching `<PREFIX>` and encrypts them into a `.env.vault`, using **only the public recipients** already committed to the repo. This lets CI produce an updated vault for local developers without the private key ever being present in CI. Refuses to overwrite an existing vault unless `--overwrite` is passed.
+
+### GitHub Action
+
+A reusable `action.yml` is included for GitHub Actions:
+
+```yaml
+- uses: FxckingAngel/envlock/action@main
+  with:
+    prefix: 'ENVLOCK_'
+    command: 'python app.py'
+  env:
+    ENVLOCK_DB_URL: ${{ secrets.DB_URL }}
+    ENVLOCK_API_KEY: ${{ secrets.API_KEY }}
+```
+
 ## File layout (per-project)
 
 ```
@@ -152,6 +188,7 @@ envlock completions powershell > _envlock.ps1
 .env.edit.tmp        # edit temp file, gitignored & scrubbed on exit
 .gitignore           # auto-managed by envlock
 .git/hooks/pre-commit  # auto-installed by envlock init
+action.yml            # GitHub Action for CI/CD bridge
 ```
 
 ## Recommended workflow
@@ -176,6 +213,9 @@ git commit -m "add teammate"
 
 # CI / manual audit
 envlock check --strict  # catches .env.local, .env.production, etc.
+
+# Populating CI secrets from your local vault (one-time or on rotation)
+envlock ci export --format json | gh secret set --env-file -
 ```
 
 ## Team sharing workflow
@@ -213,16 +253,18 @@ envlock run -- python app.py
 - **Fresh checkout exposure** — `envlock encrypt` and `envlock edit` warn if `.gitignore` isn't covering secrets; `envlock doctor` catches the full picture after `git clone`
 - **Insider access creep** — `envlock recipients remove` + re-encrypt revokes future access
 - **Shell history leaks** — `envlock rotate --prompt` reads secrets without echoing
+- **Manual CI secret copy-paste** — `envlock ci export`/`ci seal` reduce the number of times a secret is manually retyped or pasted between local and CI
 
 ### What envlock does NOT protect against
 
-- **Compromised machines** — if an attacker has access to `.envlock/identity.txt`, they can decrypt any vault encrypted to that key. Protect your private key.
+- **Compromised machines** — if an attacker has access to `.envlock/identity.txt`, they can decrypt any vault encrypted to that key. Protect your private key. Note: this doesn't eliminate the "one file must never leak" problem that plaintext `.env` has — it consolidates it into a single file that's generated once and never needs to be copied between machines or people (only the encrypted vault travels). Whether that's a meaningful improvement over plaintext-in-git depends on your setup; if you have access to a proper secrets manager (Vault, cloud KMS), that provides stronger guarantees than envlock does.
 - **Runtime memory attacks** — `envlock run` holds decrypted secrets in process memory. A debugger or `ptrace` can read them. This is the same threat model as any tool that loads `.env` files.
 - **Git history exposure** — if you commit `.env` before running `envlock init`, the secret exists in git history. Use `git filter-repo` to scrub it.
 - **Vault file tampering** — age provides authenticity, but envlock does not audit access logs. If you need audit trails, use a dedicated secrets manager.
 - **SIGKILL during edit** — the temp file scrub uses a `Drop` guard, which fires on panics and normal exits but not on `SIGKILL`. An unclean kill could leave `.env.edit.tmp` on disk (it's gitignored and 0600-permissioned, but the plaintext content would survive).
+- **Stdout leakage from `ci export`** — the decrypted output is only as safe as the pipeline it's piped into. See the warning under [CI/CD bridge](#cicd-bridge).
 
-envlock is a **local secret hygiene tool**, not a secrets manager. For production infrastructure, pair it with a proper secrets management solution.
+envlock is a **local secret hygiene tool**, not a secrets manager. For production infrastructure, pair it with a proper secrets management solution or your CI provider's built-in secrets store — envlock's `ci` commands are meant to bridge to those, not replace them.
 
 ## Security notes
 
@@ -235,8 +277,10 @@ envlock is a **local secret hygiene tool**, not a secrets manager. For productio
 - `envlock diff` redacts values — only key names and change types are shown.
 - Decryption failures produce a generic "Decryption failed" message to avoid oracle-style information leaks.
 - `envlock rotate --prompt` reads secrets from stdin without echoing, keeping them out of shell history.
+- `envlock ci seal` never requires the private key in CI — only public recipients are used.
 - `envlock check` + pre-commit hook provide a safety net that's on by default after `envlock init`.
 - `envlock doctor` gives a full diagnostic — run it after `git clone` or any time something feels off.
+- **Before every `cargo publish`**, run `cargo package --list` and review it manually. This project's own history includes releases where secrets were nearly published to the crate registry due to an untracked file being caught late — always verify the package list before publishing, don't rely on gitignore alone.
 
 ## Dependencies
 
@@ -255,3 +299,9 @@ envlock is a **local secret hygiene tool**, not a secrets manager. For productio
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT License](LICENSE-MIT) at your option.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this crate by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+
+## Development notes
+
+This project was built by Korone with AI assistance (Claude) for planning, architecture specs, and debugging discussion. All code was written, tested, and verified by hand — every commit reflects actual running, tested behavior, not generated-and-assumed-correct output. Design tradeoffs (e.g. identity-key-on-disk vs. OS keychain, the in-memory `run` decision, and the CI bridge design) were made by the author.
+
+This README, including this notice, was drafted with AI assistance and edited by the author.
